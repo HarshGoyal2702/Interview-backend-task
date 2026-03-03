@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  
+  // The name of your worker as it will appear in the Cloudflare dashboard
+  "name": "zenithra-vault-gatekeeper",
+  
+  // The entry point of your application. 
+  // Note: If you use a wrapper for Express, point this to the wrapper file (e.g., "index.js")
+  "main": "server.js", 
+  
+  // Locks the Cloudflare runtime features to this specific date to prevent breaking changes
+  "compatibility_date": "2026-03-03",
+  
+  "compatibility_flags": [
+    // CRITICAL: This flag tells Cloudflare to polyfill Node.js built-in APIs. 
+    // Without this, Express and your required packages will fail to load.
+    "nodejs_compat" 
+  ],
+
+  // Enables logging so the Zenithratech Council can monitor who is hitting the gates
+  "observability": {
+    "enabled": true
+  },
+
+  // (Optional) Define environment variables here if you decide to hide your vault password
+  "vars": {
+    // "VAULT_PASSWORD": "backend_master_2026"
+  }
+}
