@@ -1,32 +1,56 @@
-import "dotenv/config";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import subscribeApp from "./src/routes/subsribeRoutes.js";
-import vaultApp from "./src/routes/vaultRoutes.js";
-import startApp from "./src/routes/startRoutes.js";
-import { failedAttempts,rateLimits} from "./src/store/store.js";
-import { CONFIG } from "./src/config/config.js";
+import { getCookie, setCookie } from "hono/cookie";
+import { getConnInfo } from "@hono/node-server/conninfo";
 
-// env.config();
-setInterval(
-  () => {
-    failedAttempts.clear();
-    rateLimits.clear();
-    console.log(
-      "[SYSTEM] Cleared in-memory maps to prevent memory exhaustion.",
-    );
-  },
-  60 * 60 * 1000,
-);
+import { CONFIG } from "./config.js";
+import { userSubscriptions } from "./store.js";
+import { logToGoogleSheet } from "./services/googleSheets.js";
+import vaultRoutes from "./routes/vaultRoutes.js";
 
 const app = new Hono();
-// -------------------------------------------------------------------
-// PHASE 1: THE CIPHER (GET Request)
-// -------------------------------------------------------------------
-app.route("/v1/interview/start", startApp);
-app.route("/v1/interview/vault", vaultApp);
-// 3. New Route: Save the user's permission to send notifications
-app.route("/v1/interview/subscribe", subscribeApp);
+
+// --- MOUNT ROUTERS ---
+app.route("/v1/interview/vault", vaultRoutes);
+
+// --- ROUTES ---
+app.post("/v1/interview/subscribe", async (c) => {
+  const visitorId = getCookie(c, "visitor_id");
+  const subscription = await c.req.json();
+  if (visitorId && subscription) {
+    userSubscriptions.set(visitorId, subscription);
+    return c.json({ success: true, message: "Subscription saved." });
+  }
+  return c.json({ error: "Missing visitor ID or subscription." }, 400);
+});
+
+app.get("/v1/interview/start", (c) => {
+  let visitorId = getCookie(c, "visitor_id") || "visitor_" + Math.random().toString(36).substring(7);
+  setCookie(c, "visitor_id", visitorId);
+  const ip = c.req.header("x-forwarded-for") || getConnInfo(c)?.remote?.address || "unknown";
+  
+  logToGoogleSheet(visitorId, "Hit /start", ip, new Date().toISOString());
+
+  return c.json({
+    guardian_message: "Halt, traveler. You have found the hidden path...",
+    directive: "Decode the ancient scroll...",
+    payload: "VGhlIGdhdGVzIG9mIFplbml0aHJh..." // Truncated for brevity
+  }, 200);
+});
+
+// --- FRONTEND ROUTES ---
+app.get("/sw.js", (c) => {
+  const swCode = `
+    self.addEventListener('push', function(event) {
+      const data = event.data.json();
+      self.registration.showNotification(data.title, {
+        body: data.body,
+        icon: 'https://cdn-icons-png.flaticon.com/512/814/814513.png'
+      });
+    });
+  `;
+  return c.text(swCode, 200, { "Content-Type": "application/javascript" });
+});
 
 app.get("/", (c) => {
   const htmlContent = `
@@ -140,30 +164,6 @@ app.get("/", (c) => {
   return c.html(htmlContent);
 });
 
-app.get("/sw.js", (c) => {
-  const swCode = `
-    self.addEventListener('push', function(event) {
-      const data = event.data.json();
-      self.registration.showNotification(data.title, {
-        body: data.body,
-        icon: 'https://cdn-icons-png.flaticon.com/512/814/814513.png' // A cool lock icon
-      });
-    });
-  `;
-  return c.text(swCode, 200, { "Content-Type": "application/javascript" });
-});
-
-// serve({
-//   fetch: app.fetch,
-//   port: CONFIG.PORT || 3001,
-// });
-
-// console.log(
-//   "[SECURE] Zenithra Gatekeeper guarding http://localhost:" +
-//     (CONFIG.PORT || 3001),
-// );
-
-// const serverless = require('serverless-http');
-// module.exports.handler = serverless(app);
-
-export default app;
+// --- START SERVER ---
+serve({ fetch: app.fetch, port: CONFIG.PORT });
+console.log(`Zenithra Gatekeeper guarding port ${CONFIG.PORT}...`);
